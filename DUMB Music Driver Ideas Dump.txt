@@ -1,0 +1,634 @@
+//-----------------------------------------------------------------------------------------------------------//
+// DUMB Music Driver
+// by VinsCool 
+//
+// This text file is mainly a mixed bag of ideas and pseudo-code for writing a music driver from scratch the proper way
+// Most of the entire concept takes inspirations from Raster Music Tracker's original 6502 driver
+// Several ideas are possibly unrealistic or very difficult to execute for the time being, but who knows what could happen!
+// There may be inaccurate assumptions and/or plain wrong ways to implement ideas, but like, how else would we know better?
+// The target platform is the Atari 8-bit computer series, but virtually anything running with a 6502 could make use of it...
+// 
+// Current status: Work in Progress 
+// The driver/module format design, as well as the concept programming involved has been started over from the ground up
+// Also, the earliest functional prototype I made before has been scrapped, due to going in the wrong direction 
+// This is all for fun and for learning, so none of this should be taken so seriously! 
+//
+// DUMB stands for "Dumb Unless Made Better" because that's how I live somehow...
+//-----------------------------------------------------------------------------------------------------------// 
+
+//--------------------------------------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Disclaimer: 
+//----------------------------------------------//
+
+I've originally made a semi-functional prototype for a new music driver intended to be an alternative to the RMT driver.
+The problem was that I took the poorest possible approach for it, causing it to become more of a janky mess than anything.
+So anyway, let's start with the format specs that are wanted, limitations are not taken in consideration for now.
+Since I've pretty much decided to take a different approach, I'm not going to recycle anything from the earlier prototype.
+
+//--------------------------------------------------------------------------------------------------------------------------------------//
+
+//-----------------------------------------------------------------------------------------------------------//
+// DUMB Module Format V0 Specs (Prototype 2):
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// General Module Specifications: 
+//----------------------------------------------//
+
+- Module Version will be the first byte read after the 4 bytes identifier, something like "DUMB" maybe? 
+- Mono and Stereo POKEY soundchip, for 4 or 8 channels respectively, data would be virtually identical otherwise 
+- PAL and NTSC will be defined in the module itself, no more guessing will be necessary, looking at you RMT...
+- Module speed between 1 and 256, VBI speed between 1 and 16, the second part is theoretical, may not be possible 
+- Possibility of using arbitrary BPM over Ticks? That would be a lot more difficult to execute, however... 
+- Subtune support? Modules would be a collection of subtunes using shared instruments for example 
+- Samples/Wavetables playback support? This is purely speculations, although it is technically possible to do... 
+- Module header should make things as clear as possible, without ambiguity, unlike the earlier prototype
+- Unique memory addresses will be saved, for Instruments, Patterns, Songlines, Tuning Tables, Samples data, etc 
+- Instruments address table, indexed from the module header most likely 
+- Songlines address table, indexed from the module header most likely
+- Patterns address table, indexed by the songline contents, each channel would have its own pattern index 
+- Rows address table, indexed by the pattern contents, again each channel would have its own rows index 
+- Extra header informations would be saved such as A-4 Tuning, and Tuning Ratios, etc (only for Tracker Playback/Edit) 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Instruments: 
+//----------------------------------------------//
+
+- Up to 64 instruments in a module 
+- 256 ticks per instrument envelope, for various parameters such as transposition, detune, distortion, AUDCTL, etc 
+- Envelopes would allow things such as Volume, Notes/Frequencies Macros, ADSR may be a bit simplified however 
+- The use of instruments between channels would make them unique, for example, if they use 16-bit or 1.79mHz modes, etc 
+- Instruments may be greatly simplified over RMT's own approach, with the benefit of using effect commands in patterns 
+- Instrument envelope speed? This would be processed separately from the module VBI speed, in this case 
+- Shared envelope/macros between instruments? It would be pretty similar to Famitracker, if this could be done 
+- Unique Stereo properties could be done, maybe? That would require more thoughts however... 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Songlines: 
+//----------------------------------------------//
+
+- 256 song lines per module, played orderly, unless a command is used to jump to a different songline 
+- Unlike RMT's driver, no "GOTO Line" would exist in songlines, a pattern effect command would be needed instead 
+- Not much to say here really... Songlines really should be straightforward to implement hopefully 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Patterns: 
+//----------------------------------------------//
+
+- 254 patterns for each channel, addressed independently, allowing each channels to have up to 254 unique patterns! 
+- The 255th pattern would simply be used as a way to identify empty patterns, so they get skipped entirely, saving memory 
+- Notes, Instruments, Volume and Commands could be used without restrictions, possibly making rows playback more flexible 
+- Patterns could use multiple universal commands, such as Note Cut, Note Release, Pattern End, Jump to Songline, Set speed, etc 
+- Possibility of using Smart Loops for shorter pattern sizes, similar to RMT's way, maybe from an effect command? 
+- Patterns would be unique between channels, so only certain channels would have the ability to perform certain actions 
+- Special AUDCTL commands in patterns would always take priority if another channel is used at the same time 
+- Pattern sizes would either be the maximal defined in module header, or custom (using effect commands) 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Rows: 
+//----------------------------------------------//
+
+- 256 rows per pattern, might be reduced to 128 rows if I need to, anything longer is pointless anyway  
+- Rows could be mapped as such: Note, Instrument, Volume, and up to 4 effect commands (similar to Famitracker) 
+- 8 octaves (96 notes) in rows, for example, C-0 to B-7, or anything that would fit to the different POKEY distortions 
+- Volume range from 0 to F (15 steps), matching the soundchip limitations 
+- Empty rows could be optimised by using a "row pause timer", to simulate longer patterns with much less data 
+- Each row would begin with a header/identifier byte, so we would know if it has a note, or commands, or if it is empty, etc 
+- Each row would end with a terminator byte, for example, $FF, or anything suitable to make it obvious at the first glance 
+- Bytes per row may be variable... If that's not impossible to manage, that is 
+- Rows may be the most difficult to implement and use, but we will see... 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Effect Commands: 
+//----------------------------------------------//
+
+- This might more or less follow the Protracker commands number and order, until I come to something definitive... 
+
+//----------------------------------------------//
+
+0 - Normal play or Arpeggio		0xy : x-first halfnote add, y-second
+1 - Slide Up				1xx : upspeed
+2 - Slide Down				2xx : downspeed
+3 - Tone Portamento			3xx : up/down speed
+4 - Vibrato				4xy : x-speed,   y-depth
+5 - Tone Portamento + Volume Slide	5xy : x-upspeed, y-downspeed
+6 - Vibrato + Volume Slide		6xy : x-upspeed, y-downspeed
+7 - Tremolo				7xy : x-speed,   y-depth
+9 - Set SampleOffset			9xx : offset (23 -> 2300)
+A - VolumeSlide				Axy : x-upspeed, y-downspeed
+B - Position Jump			Bxx : songposition
+C - Set Volume				Cxx : volume, 00-40
+D - Pattern Break			Dxx : break position in next patt
+F - Set Speed				Fxx : speed (00-1F) / tempo (20-FF)
+E9- Retrig Note				E9x : retrig from note + x vblanks
+
+Other Exx commands:
+
+E00/1=filter on/off - E1x/2x=FineSlide Up/Down - E30/1=tonep ctrl off/on
+E40/1/2=Vib Waveform sine/rampdown/square, E70/1/2=Tremolo Waveform
+E5x=set loop point,E6x=jump to loop+play x times
+EAx/EBx=Fine volslide up/down
+ECx/EDx=notecut after x vblanks/notedelay by x vblanks
+EEx/EFx=PatternDelay by x notes/Invert loop, x=speed
+
+//----------------------------------------------//
+
+- As far as what I have been thinking about, this is my own incomplete list of commands:
+
+- Vibrato 
+- Waveform/Distortion 
+- AUDCTL (commands will be unique to each channels, and certain combinations will take priority over other commands) 
+- Portamento 
+- Pitch Slide Up (to highest) 
+- Pitch Slide Down (to lowest) 
+- Pitch to Note Up 
+- Pitch to Note Down 
+- Note Cut 
+- Note Release 
+- Pattern End 
+- GOTO Songline 
+- Arpeggio 
+- Smart Loop Trigger (similar to RMT's own implementation) 
+- Tremolo 
+- Volume Fade In/Out 
+- Finetune 
+- Speed (ticks per row, BPM maybe?) 
+- Direct Register Writes (similar to RMT's Instrument Command 1xx in a way) 
+- Signal/Write to I/O port (unsure how that would work but thanks Forple for the idea) 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//--------------------------------------------------------------------------------------------------------------------------------------//
+
+//-----------------------------------------------------------------------------------------------------------//
+// Module Data Structures: 
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Instruments: 
+//----------------------------------------------//
+
+- TODO 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Songlines: 
+//----------------------------------------------//
+
+- Structure should be very straightforward: 4 bytes (Mono) or 8 bytes (Stereo) per songline 
+- Each channel would make use of 1 byte for the pattern Index Number used for each of the songlines in the module 
+- Bytes $00 to $FE -> Pattern Index Number, unique for every channels using them, pretty self explanatory 
+- Byte $FF -> Empty Pattern byte, so the actual pattern itself will be skipped entirely during playback 
+- Pattern Index is pretty much as direct as it could be, just an offset to the Channel's own Patterns Address Table 
+- It will sit Zeropage memory for the time it is needed, and will be called every time the rows index must be updated 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Patterns: 
+//----------------------------------------------//
+
+- Each channels will use their own Patterns Address Table, pointing to the respective atterns Index Table 
+- The Pattern Index Number may be set between $00 and $FE, for 254 unique patterns for each channels 
+- The Index Number $FF will not be used, since it will be detected as an Empty Pattern, which shouldn't have data 
+- Patterns will be used to indirectly address the Rows Index Table, making each 16-bit address unique to the channel itself 
+- The address itself will make use of the Pattern Index Number pointing to split bytes lists, for the MSB and LSB 
+- No extra operation would be required to fetch the 2 address bytes to form the 16-bit pointer to Rows Index 
+- Due to processing them directly using the Pattern Index Number, there would be no need for loading them every time  
+- The first Row is always assumed once a pattern gets initialised, unless a command was used to skip X rows from it 
+- There is not much else to say here really, any further breakdown will be done with the Rows themselves 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Rows: 
+//----------------------------------------------//
+
+- This is a rough idea, likely to change multiple times later! 
+
+- Rows will be variable in size, ended by a terminator byte 
+- A global counter will keep track of the rows played, which will apply to every channels 
+- The pattern length parameter will correlate directly to the counter, so the pattern is ended when it is equal or above 
+- Effect commands such as Smart Loop, Pattern End, etc, will correlate to the Counter as well 
+- If the current row has a command to set Pattern End, all patterns are ended at the same time, and jump to the next Songline 
+- An empty row will use a "pause" timer that correlates to the ticks per row, making it take much less memory 
+- Several empty rows will simply run that same pause timer for as many times as there are empty rows 
+- Smart Loop commands will simply do the following: Set the start of loop, and the parameter sets the end of loop 
+- While in a smart loop, the same rows will repeat for the remaining numbers of rows in the pattern, until it is ended 
+- Any pattern that has a Pattern End command in the current row number will take priority, ending the pattern for all channels 
+
+
+- Individual row structure, in bytes: $VV $NN $II $CC $XY $TT 
+
+- In human terms, with the same order: Volume and Row Properties, Note, Instrument, Command(s), $XY Parameter(s), Terminator 
+
+- Example of row bytes format (more infos below):	$7F $0C $00 $44 $63 $83 
+
+- Data processed in Tracker should look like this:	| ...Past Rows Data Here... | 
+							| C-1 00 vF 463 --- --- --- |  
+							| --- -- -- --- --- --- --- | 
+							| --- -- -- --- --- --- --- | 
+							| --- -- -- --- --- --- --- | 
+							| ...Next Rows Data Here... | 
+
+- Byte VV -> Row Properties, Set Volume Command, What the row data is supposed to be, etc
+- Byte VV list (bitwise): %TSNI VVVV 
+- Parameter T -> Trigger bit, if set, the pattern will be terminated 
+- Parameter S -> Set Volume Command, (Parameter V bits), else, setting volume will be skipped (-) 
+- Parameter N -> Set Note Command (byte $NN), else, setting the Note will be skipped (---) 
+- Parameter I -> Set Instrument Command (byte $II), else, setting the Instrument will be skipped (--) 
+- Parameter V -> Volume value to set, ranging between $0 to $F, unless the Parameter S is not set, it will then be ignored 
+- The next byte is always assumed to be $II, $NN, or $CC, if the pattern is not terminated 
+
+
+- Byte NN -> Note Index (96 notes total), Note Cut/Release Command 
+- Byte NN list (bitwise): %TNNN NNNN 
+- Parameter T -> Trigger bit, if set, the pattern will be terminated 
+- Parameter N -> Note Index Number, from $00 to $5F maximum, for 96 notes indexed in memory 
+- if $NN == $60 -> Note Release, the current instrument playing will be released from its ADSR envelope 
+- if $NN == $7F -> Note Cut, the channel is muted, and the instrument effects are reset and/or ignored 
+- Values between $61 and $7E are currently unused, as such, there is room for some extra functionalities 
+- The next byte is always assumed to be $II or $CC, if the pattern is not terminated 
+
+
+- Byte II -> Instrument Index (64 instruments total) 
+- Byte II list (bitwise): %T?II IIII 
+- Parameter T -> Trigger bit, if set, the pattern will be terminated 
+- Parameter ? -> Unused bit, always ignored 
+- Parameter I -> Instrument Index Number, from $00 to $3F 
+- The next byte is always assumed to be $CC, if the pattern is not terminated 
+
+
+- Byte CC -> Effect Command (Optional) 
+- Byte CC list (bitwise): %TP?? CCCC  
+- Parameter T -> Trigger bit, if set, the pattern will be terminated 
+- Parameter P -> The next byte will be used as the Command $XY Parameter 
+- Parameter ? -> Unused bit, always ignored 
+- Parameter C -> Effect Command Index Number, from $00 to $0F 
+- The next byte is always assumed to be $XY if the Parameter P is set, or $CC if the pattern is not terminated 
+
+
+- Byte XY -> Effect Command $XY Parameter (Optional) 
+- Byte XY list (bitwise): %XXXX YYYY 
+- Parameter X -> Set X Command Parameter 
+- Parameter Y -> Set Y Command Parameter 
+- An exception will be in place for this byte, it should never terminate a pattern 
+- The next byte is always assumed to be $CC, which may aslo be a Terminator byte 
+
+
+- Byte TT -> Row Terminator 
+- This uses the Trigger Bit (Bit 7) valid for any byte, except the $XY Parameter, since all 256 values are used with it 
+- The value in the remaining 7 bits will be used as the Row Pause Length, except $00, set to play the next row like normal  
+- Up to 128 rows could be set for the pause duration, so for 256 rows, at least 2 of them will be needed 
+- An offset equal to the number of bytes parsed in the current Row will be added to the Rows Index Address 
+- The Current Rows Counter will then be updated if every channels have been successfully processed the same way 
+- The pause length is equal to the current song speed (in ticks), to simulate a full row being played  
+- The pause counter will only be set after every other channels were processed, in case the speed value was changed 
+- eg: $83 means the pause will last 3 rows, the "next" proper row in that pattern will only play after that period 
+
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Effect Commands: 
+//----------------------------------------------//
+
+- TODO 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Memory Management: 
+//----------------------------------------------//
+
+- TODO, VERY IMPORTANT PART, SHOULD NOT BE HALF ASSED, ABSOLUTELY NOT 
+- Any similarities to the Raster Music Tracker memory map is purely intentional and may be expected for familiarity  
+
+
+- Zeropage -> Defined from $0080 to $00FF, hopefully less than that, to leave enough space to anything else
+
+- Most of the memory addresses intended to be used to index data indirectly 
+- Including but not limited to: Songline Index, Patterns Index, Rows Index, Instruments Index, which may be for multiple channels 
+- Unprocessed POKEY variables such as AUDC, AUDF, AUDCTL and data loaded from lookup tables for it
+- Frequently read/written data, such as Music Timer, Speed, Rows Count, Songline number, temporary variables used for calculations, etc
+- Instruments and Pattern Effect Commands variables, to speed up operations as much as possible 
+- Anything that just needs to be quick to read and write really, to save on cycles  
+
+
+- Variables -> defined from $2000 to $2800, maybe more, maybe less, who knows really 
+
+- Any data included in the module data but isn't static, but not the highest priority either, like effect commands variables 
+- Songlines, Patterns, Rows, and Instruments data 
+- Variables that could be read less often if this is saving precious Zeropage bytes 
+- Pretty much anything that doesn't need to be accessed quicklu, or isn't worth moving to the Zeropage for any reason reason 
+- The buffered POKEY registers, that will be written to the actual thing at the start of the next VBI(s) 
+
+
+- Driver -> most likely right after the variables defined above, from $2800 to $4000
+
+- Much of this region would be including data such as tables and constants used by the music driver 
+- Everything else that couldn't fit anywhere, assuming the memory isn't constrained, such as tuning lookup tables, etc 
+- Any extra code that would require being modular to make projects easier to manage (if anyone wants to use this driver maybe) 
+- Any unrelated data used for the export player, for example, VUPlayer (totally not a self promotion, lol) 
+
+
+- Module -> on top of everything else, most likely, from $4000 to $???? (as large as the RAM could fit it, really) 
+
+- Simply because it has to be stored somewhere before it is being processed by the music driver, and that would be pretty much it 
+- Anything else afterwards would be whatever the user wants to put there, I guess... 
+
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//--------------------------------------------------------------------------------------------------------------------------------------//
+
+//-----------------------------------------------------------------------------------------------------------//
+// Memory Address Definitions: 
+//-----------------------------------------------------------------------------------------------------------//
+
+Everything that will be written below will be in pseudo-assembly code for easier implementation in code later
+Things may be prone to change many times, so it's very important to carefully respect the structure designed!
+ps: Have fun losing your mind later trying to interpret what was written by Vin so far, lolz 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Zeropage: 
+//----------------------------------------------//
+
+- TODO 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Variables: 
+//----------------------------------------------//
+
+- TODO 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Driver: 
+//----------------------------------------------//
+
+- TODO 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+//----------------------------------------------//
+// Module: 
+//----------------------------------------------//
+
+	org $4000						; Same address used by RMT, but this isn't absolutely required here 
+MODULE        							; Start of the DUMB Module (Begin Low Header) 
+DUMB	
+	dta d"DUMB"						; 4 bytes identifier 
+VERSION	
+	dta $00							; Module version number 
+REGION	
+	dta $01							; Module Region ($00 for PAL, $01 for NTSC) 
+MAXTLEN	
+	dta $10							; Maximal pattern length 
+SONGLEN 
+	dta $08 						; Total Number of Songlines  
+INITSPD	
+	dta $08							; Initial Module Speed 
+VBISPD	
+	dta $01							; xVBI Speed, up to $0F maximum, high speeds need more CPU cycles 
+UNUSED1	
+	dta $00,$00,$00,$00,$00,$00 				; Unused/Reserved bytes, for a total of 16 bytes (End Low Header)
+
+ADDRTBL								; Start of Address Table structure (Begin High Header) 
+
+SONGTBL	
+	dta a(SONGLNE) 						; Songline Address Table, for all channels 
+
+PATTBL								; Pattern Address Table, each channel is assigned to a 16-bit pointer 
+	dta a(PATTCH1) 
+	dta a(PATTCH2) 
+	dta a(PATTCH3) 
+	dta a(PATTCH4) 
+
+INSTTBL 
+	dta a(INSTDTA) 						; Instruments Address Table, for all channels
+
+DATATBL 							; Start of Data Structure, set after the 48 bytes Module header
+
+SONGLNE 							; Songline Data, 1 byte per channel for Pattern Index Number 
+	dta $00,$FF,$FF,$FF 					; <- Example of possible data usage for a simple tune 
+	dta $01,$FF,$FF,$FF					
+	
+PATTERN								; Pattern Pointer to Rows, always starting from the first row 
+PATTCH1
+	dta a(PTN1_00) 						; <- Example of possible data usage for a simple tune 
+	dta a(PTN1_01) 
+PATTCH2	
+	; Empty 
+PATTCH3	
+	; Empty 
+PATTCH4	
+	; Empty 
+
+ROWDATA								; Row data used in patterns, indexed using the Pattern pointers 
+
+PTN1 								; Start of Rows Data for Channel 1 
+PTN1_00
+	dta $7F,$00,$00,$44,$63,$83				; C-0 00 vF 463, with 3 empty rows (pause) 
+	dta $7F,$0C,$00,$44,$63,$83				; C-1 00 vF 463, with 3 empty rows (pause) 
+	dta $7F,$18,$00,$44,$63,$83				; C-2 00 vF 463, with 3 empty rows (pause) 
+	dta $7F,$24,$00,$44,$63,$83				; C-3 00 vF 463, with 3 empty rows (pause) 
+PTN1_01
+	dta $7F,$00,$00,$44,$63,$81				; C-0 00 vF 463, with 1 empty rows (pause) 
+	dta $74,$00,$00,$44,$63,$81				; C-0 00 v4 463, with 1 empty rows (pause) 
+	dta $7F,$0C,$00,$44,$63,$81				; etc, etc... 
+	dta $74,$0C,$00,$44,$63,$81
+	dta $7F,$18,$00,$44,$63,$81
+	dta $74,$18,$00,$44,$63,$81
+	dta $7F,$24,$00,$44,$63,$81
+	dta $74,$24,$00,$44,$63,$81 
+
+PTN2								; Start of Rows Data for Channel 2 
+	; Empty 
+	
+PTN3								; Start of Rows Data for Channel 3 
+	; Empty 
+	
+PTN4								; Start of Rows Data for Channel 4 
+	; Empty 
+	
+ENDFILE								; No extra Module data exists past this point 
+
+//-----------------------------------------------------------------------------------------------------------//
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+haha I made you look all the way to the bottom didn't I :D 

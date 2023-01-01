@@ -1,0 +1,302 @@
+mads 2.1.3
+Source: DUMB Instrument Deconstruction.asm
+     1 				;* Deconstructed DUMB instrument in 6502 ASM 
+     2 				;* by VinsCool 
+     3 				;* 
+     4 				;* This is intended to be used with DUMB Music Driver, as an alternative to the RMT driver 
+     5 				;* The instrument format is also very similar to help maintain some backwards compatibility 
+     6 				;* 
+     7 				;* Instruments vary greatly in size, ranging between 16 bytes (minimum) and 256 bytes (maximum) 
+     8 				;* Long Envelopes and/or long Tables add up very quickly, which could eat a lot precious memory! 
+     9 				;--------------------------------------------------------------------------------------------------;
+    10
+    11 				;* Volume Constants 
+    12
+    13 = 0000			v0	= $00
+    14 = 0001			v1	= $01
+    15 = 0002			v2	= $02
+    16 = 0003			v3	= $03
+    17 = 0004			v4	= $04
+    18 = 0005			v5	= $05
+    19 = 0006			v6	= $06
+    20 = 0007			v7	= $07
+    21 = 0008			v8	= $08
+    22 = 0009			v9	= $09
+    23 = 000A			vA	= $0A
+    24 = 000B			vB	= $0B
+    25 = 000C			vC	= $0C
+    26 = 000D			vD	= $0D
+    27 = 000E			vE	= $0E
+    28 = 000F			vF	= $0F
+    29
+    30 				;* Distortion Constants 
+    31
+    32 = 0001			DIST_0	= $01
+    33 = 0002			DIST_2	= $02 
+    34 = 0003			DIST_4	= $03 
+    35 = 0004			DIST_8	= $04 
+    36 = 0005			DIST_A	= $05 
+    37 = 0006			DIST_C	= $06 
+    38 = 0007			DIST_E	= $07 
+    39 = 0000			NO_DIST	= $00 
+    40
+    41 				;* Command Constants 
+    42
+    43 = 0000			CMD_0	= $00
+    44 = 0010			CMD_1	= $10 
+    45 = 0020			CMD_2	= $20
+    46 = 0030			CMD_3	= $30
+    47 = 0040			CMD_4	= $40
+    48 = 0050			CMD_5	= $50
+    49 = 0060			CMD_6	= $60
+    50 = 0070			CMD_7	= $70 
+    51 = 0080			NO_CMD	= %10000000 
+    52 = 0008			NO_AUD	= %00001000
+    53
+    54 				;* Auto AUDCTL Constants 
+    55
+    56 = 0010			A15KHZ	= %00010000 
+    57 = 0020			FILTER	= %00100000 
+    58 = 0040			A179MHZ	= %01000000 
+    59 = 0080			A16BIT	= %10000000 
+    60
+    61 				;-----------------
+    62
+    63 				;* TODO: Make a better macro for creating Instrument Data by hand a lot easier! 
+    64
+    65 				.MACRO	ENV [vol, dist, cmd, xy, param] 
+    66 					.IF (:vol > $FF) 
+    67 						.BYTE $00,$00,$00	; Missing parameter, Empty Envelope tick is assumed  
+    68 						
+    69 					.ELSEIF (:dist > $FF)
+    70 						.BYTE :vol
+    71 						.BYTE $00
+    72 						.BYTE $00 
+    73 				
+    74 					.ELSEIF (:cmd > $FF)
+    75 						.BYTE :vol
+    76 						.BYTE :dist
+    77 						.BYTE $00
+    78 				
+    79 					.ELSEIF (:xy > $FF)
+    80 						.BYTE :vol
+    81 						.BYTE :dist + :cmd
+    82 						.BYTE $00 
+    83 						
+    84 					.ELSEIF (:param > $FF)
+    85 						.BYTE :vol
+    86 						.BYTE :dist + :cmd
+    87 						.BYTE :xy 
+    88 				
+    89 					.ELSE 
+    90 						.BYTE :vol + :param 
+    91 						.BYTE :dist + :cmd 
+    92 						.BYTE :xy 
+    93 							
+    94 					.ENDIF	
+    95 				
+    96 				.ENDM
+    97
+    98 				;-----------------
+    99
+   100 				;--------------------------------------------------------------------------------------------------;
+   101 				;* DUMB Instrument Format Ideas (WIP): 
+   102 				;* 
+   103 				;* Tables could be separated from each others, including their own Speed Timer when used 
+   104 				;* Envelope and Table could be skipped, and missing data could fallback to using Pattern data directly 
+   105 				;* Each ones of the Envelopes and Tables could use up to 48 ticks, everything is now equal!
+   106 				;* Volume Envelopes could possibly Sustain and have Release triggered with a Note Release Command in patterns 
+   107 				;* Any unused data will simply be ignored, and optimally, stripped away when it is possible 
+   108 				;* Offsets could act as a trigger for using a Table and/or and Envelope: 0 would skip using it entirely 
+   109 				;* Move Autofilter to bit 0, and replace Portamento with Auto16-bit on bit 7, leaving Distortion 6 free 
+   110 				;* Add a Speed parameter to the Envelope, so it could be stretched and/or adjusted to Tables 
+   111 				;* Add a Retrigger command for Instruments, and skip initialising a new instrument for Legato effect! 
+   112 				;--------------------------------------------------------------------------------------------------;
+   113
+   114 				;* Instrument Constants 
+   115
+   116 = 000C			INSTRPAR	= instr_data_end - instr_data 
+   117 = 000C			TOTAL_BYTES	= freqs_table_end - instr_data 
+   118 = 0003			ENV_OFFSET	= 3				; envelope_offset_end - envelope_offset 
+   119
+   120 				;* Notes Table  
+   121
+   122 = 0000			NOT_LENGTH	= notes_table_end - notes_table 
+   123 = 0000			NOT_GOTO	= notes_table_goto - notes_table 
+   124 = 0001			NOT_SPEED	= $01
+   125 = 0000			NOT_MODE	= 0 
+   126 = 0000			NOT_TYPE	= 0 
+   127
+   128 				;* Freqs Table  
+   129
+   130 = 0000			FRQ_LENGTH	= freqs_table_end - freqs_table 
+   131 = 0000			FRQ_GOTO	= freqs_table_goto - freqs_table 
+   132 = 0001			FRQ_SPEED	= $01
+   133 = 0000			FRQ_MODE	= 0 
+   134 = 0000			FRQ_TYPE	= 0 
+   135
+   136 				;* Volume and Command Envelope 
+   137
+   138 = 0007			ENV_LENGTH	= (envelope_end - envelope) / ENV_OFFSET 
+   139 = 0006			ENV_GOTO	= (envelope_goto - envelope) / ENV_OFFSET 
+   140 = 0001			ENV_SPEED	= $01 
+   141
+   142 				;* Instrument Parameters 
+   143
+   144 = 000B			PTR_NLEN	= INSTRPAR + NOT_LENGTH - 1 
+   145 = 000C			PTR_NGO		= INSTRPAR + NOT_GOTO 
+   146 = 000B			PTR_FLEN	= PTR_NLEN + FRQ_LENGTH 
+   147 = 000C			PTR_FGO		= PTR_NLEN + FRQ_GOTO + 1 
+   148 = 001E			PTR_ELEN	= PTR_FLEN + (ENV_OFFSET * (ENV_LENGTH - 1)) + 1 
+   149 = 001E			PTR_EGO		= PTR_FLEN + (ENV_OFFSET * (ENV_GOTO)) + 1
+   150 = 0000			PAR_NSPD	= NOT_SPEED + (NOT_MODE * $40) + (NOT_TYPE * $80) - 1 
+   151 = 0000			PAR_FSPD	= FRQ_SPEED + (FRQ_MODE * $40) + (FRQ_TYPE * $80) - 1 
+   152 = 0000			PAR_ESPD	= ENV_SPEED - 1  
+   153 = 0008			PAR_VSLIDE	= $08 
+   154 = 0006			PAR_VMIN	= $00 + %00000110
+   155 = 0000			PAR_AUDCTL	= $00 
+   156
+   157 				;-----------------
+   158
+   159 				;--------------------------------------------------------------------------------------------------;
+   160 				;* Instrument Parameters 
+   161 				;* Size: 0 to 16 bytes, except that it is impossible to create a 0 byte Instrument! 
+   162 				;* 
+   163 				;* The bytes will be used only once per initialisation, but may be reloaded when needed 
+   164 				;--------------------------------------------------------------------------------------------------;
+   165
+   166 					org $0000	; This is necessary to be able to assemble anything at all 
+   167 					opt h-		; This lets me assemble data without making it executable as well 
+   168
+   169 				instr_data
+   170 0000 0B			nlen	dta PTR_NLEN	; Offset to End of Table of Notes && Offset to Start of Table of Freqs
+   171 0001 0C			ngo	dta PTR_NGO	; Offset to Loop Point of Table of Notes
+   172
+   173 0002 0B			flen	dta PTR_FLEN	; Offset to End of Table of Freqs && Offset to Start of Envelope 
+   174 0003 0C			fgo	dta PTR_FGO	; Offset to Loop Point of Table of Freqs
+   175
+   176 0004 1E			elen	dta PTR_ELEN	; Offset to End of Envelope && End of Instrument 
+   177 0005 1E			ego	dta PTR_EGO 	; Offset to Loop Point of Envelope 
+   178
+   179 0006 00			nspd	dta PAR_NSPD	; Table of Notes Speed (bits 0-5), Mode (bit 6), and Type (bit 7) 
+   180 0007 00			fspd	dta PAR_FSPD 	; Table of Freqs Speed (bits 0-5), Mode (bit 6), and Type (bit 7) 
+   181 0008 00			espd	dta PAR_ESPD	; Envelope Speed (bit 0-5), and Mode (bit 7) 
+   182
+   183 0009 08			vslide	dta PAR_VSLIDE	; Volume Slide Velocity 
+   184 000A 06			vmin	dta PAR_VMIN	; Instrument Parameters (bits 0-3), Volume Minimum (bits 4-7) 
+   185 000B 00			audctl	dta PAR_AUDCTL	; AUDCTL 
+   186 000C			instr_data_end
+   187
+   188 				;-----------------
+   189
+   190 				;--------------------------------------------------------------------------------------------------;
+   191 				;* Table of Notes 
+   192 				;* Size: 0 to 48 bytes, 1 byte per tick 
+   193 				;* 
+   194 				;* The Table of Notes will be disabled if the size is defined to be 0, and skipped in the DUMB routines 
+   195 				;* PAR_NSPD defines Speed (bits 0-5), Mode (Set or Add, bit 6), and Type (Relative or Absolute, bit 7)
+   196 				;--------------------------------------------------------------------------------------------------;
+   197
+   198 000C			notes_table 
+   199 				;	dta $00
+   200 				;	dta $01 
+   201 000C			notes_table_goto
+   202 				;	dta $00
+   203 000C			notes_table_end 
+   204
+   205 				;-----------------
+   206
+   207 				;--------------------------------------------------------------------------------------------------;
+   208 				;* Table of Freqs 
+   209 				;* Size: 0 to 48 bytes, 1 byte per tick 
+   210 				;* 
+   211 				;* The Table of Freqs will be disabled if the size is defined to be 0, and skipped in the DUMB routines 
+   212 				;* PAR_FSPD defines Speed (bits 0-5), Mode (Set or Add, bit 6), and Type (Relative or Absolute, bit 7)
+   213 				;--------------------------------------------------------------------------------------------------;
+   214
+   215 000C			freqs_table 
+   216 000C			freqs_table_goto 
+   217 				;	dta $00
+   218 000C			freqs_table_end 
+   219
+   220 				;-----------------
+   221
+   222 				;--------------------------------------------------------------------------------------------------;
+   223 				;* Volume and Command Envelope 
+   224 				;* Size: 0 to 144 (3 * 48) bytes max, 3 bytes per tick 
+   225 				;* 
+   226 				;* The Envelope will be disabled if the size is defined to be 0, and skipped in the DUMB routines 
+   227 				;* PAR_ESPD defines Speed (bits 0-5), and Mode (Sustain or Release, bit 7) 
+   228 				;* PAR_VMIN defines Volume Minimum (bits 4-7) 
+   229 				;* 
+   230 				;* Byte 1: Volume (bits 0-3), Auto15khz (bit 4), AutoFilter (bit 5), Auto179mhz (bit 6), Auto16bit (bit 7) 
+   231 				;* Byte 2: Distortion (bits 0-2), Use AUDCTL (bit 3), Command (bits 4-6), Skip Command (bit 7) 
+   232 				;* Byte 3: $XY Parameter, may also be ignored if the is no need for a parameter 
+   233 				;* 
+   234 				;* If the Skip Command bit is set in any of the Envelope Tick, the Command and Parameter will be ignored 
+   235 				;* 
+   236 				;* List of Commands: 
+   237 				;* 
+   238 				;* CMD0: Note Offset => May be combined to Table of Notes if Relative Mode is used 
+   239 				;* CMD1: Absolute Freq => Will always take priority over Tables, 16-bit mode isn't fully compatible since 2 bytes are needed 
+   240 				;* CMD2: Finetune => May be combined to Table of Freqs if Relative Mode is used 
+   241 				;* CMD3: Unused 
+   242 				;* CMD4: Unused 
+   243 				;* CMD5: AutoTwoTone Offset => This parameter is ignored unless the AutoTwoTone bit is set 
+   244 				;* CMD6: Autofilter Offset => This parameter is ignored unless the Autofilter bit is set 
+   245 				;* CMD7: AUDCTL => Overwrite the AUDCTL parameter in the active instrument, may be reset if a Retrigger command is used 
+   246 				;* 
+   247 				;* It is worth mentioning that most of this design is WIP 
+   248 				;* Things are very likely to be changed later for X or Y reason, there's no rush for optimisations yet! 
+   249 				;--------------------------------------------------------------------------------------------------;
+   250
+   251 000C			envelope 
+   252 000C				ENV v2 DIST_8 CMD_1 $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 000C 82					.BYTE V2 + A16BIT 
+    26 000D 14					.BYTE DIST_8 + CMD_1 
+    27 000E 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   253 000F				ENV v3 DIST_2 NO_CMD $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 000F 83					.BYTE V3 + A16BIT 
+    26 0010 82					.BYTE DIST_2 + NO_CMD 
+    27 0011 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   254 0012				ENV v4 DIST_A CMD_2 $01 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 0012 84					.BYTE V4 + A16BIT 
+    26 0013 25					.BYTE DIST_A + CMD_2 
+    27 0014 01					.BYTE $01 
+Source: DUMB Instrument Deconstruction.asm
+   255 0015				ENV v5 DIST_A NO_CMD $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 0015 85					.BYTE V5 + A16BIT 
+    26 0016 85					.BYTE DIST_A + NO_CMD 
+    27 0017 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   256 0018				ENV v4 DIST_A NO_CMD $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 0018 84					.BYTE V4 + A16BIT 
+    26 0019 85					.BYTE DIST_A + NO_CMD 
+    27 001A 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   257 001B				ENV v4 DIST_A NO_CMD $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 001B 84					.BYTE V4 + A16BIT 
+    26 001C 85					.BYTE DIST_A + NO_CMD 
+    27 001D 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   258 001E			envelope_goto	
+   259 001E				ENV v5 DIST_A NO_CMD $00 A16BIT
+Macro: ENV [Source: DUMB Instrument Deconstruction.asm]
+    25 001E 85					.BYTE V5 + A16BIT 
+    26 001F 85					.BYTE DIST_A + NO_CMD 
+    27 0020 00					.BYTE $00 
+Source: DUMB Instrument Deconstruction.asm
+   260 0021			envelope_end 
+   261
+   262 				;-----------------
+   263
+   264 				;--------------------------------------------------------------------------------------------------;	
+   265

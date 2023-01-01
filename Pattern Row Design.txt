@@ -1,0 +1,42 @@
+;-------------------------------------------------------------------------
+;* Pattern Row Data Structure 
+;-------------------------------------------------------------------------
+
+;* All 8 bits will be used for the first byte to read: 
+;* 
+;* [ BYTE 1 ] 
+;*  TNIV1234 
+;* 
+;* In order of Bit priority: 
+;* 
+;* Bit T = Tigger Bit -> Will set a Row Pause for the current Row 
+;* If the bit is set, the remaining 7 bits will be used to set the Pause Length, Which can range between 0 and 127 Rows 
+;* Otherwise, the remaining bits will be used to process the Note, Instrument, Volume, and up to 4 Effect Commands 
+;* 
+;* Bit N = Note Bit -> Will set a Note Index/Command for the current Row 
+;* 1 byte will then be used for its data 
+;* 
+;* Bit I = Instrument Bit -> Will set an Instrument Index/Command for the current Row 
+;* 1 byte will then be used for its data 
+;* 
+;* Bit V -> Will define if a new Volume Level/Command is set for the current Row 
+;* 1 byte will then be used for its data 
+;* 
+;* Bits 1-2-3-4 -> Will define if an Effect Command is used, 1 for each bits 
+;* 2 bytes will then be used, the first byte will be the Command Index, and the other byte will be the $XY Parameter 
+;* Due to the complexity of the previous design, I decided to just let commands use 2 bytes, no need to bother checking its all 
+;* 
+;* Special Case: if the Byte is $00, the Pattern is Terminated 
+;* The Row Pause will be ignored, and the Byte Pointer won't be incremented 
+;* This will set the End of a Pattern, or simply an Empty Pattern, only 1 byte would be read, everything else will be ignored 
+;* To avoid confusion with an Empty Row, just make sure to set the Trigger Bit with a Row Pause length of 0 ;) 
+;* 
+;* [ BYTE 2 ] [ BYTE 3 ] 
+;*  IDX&/CMD   $XYPARAM
+;* 
+;* The remaining Bits and Bytes to use are Self Explanatory 
+;* There is no extra steps involved for keeping track of the Bytes counted, that will be done automatically 
+;* Same for the Row Index Pointer, this will be handled automatically 
+
+
+
